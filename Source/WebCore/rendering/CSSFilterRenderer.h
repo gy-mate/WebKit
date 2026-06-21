@@ -27,6 +27,7 @@
 
 #include <WebCore/BoxExtents.h>
 #include <WebCore/Filter.h>
+#include <WebCore/FilterOperations.h>
 #include <wtf/TZoneMalloc.h>
 
 namespace WebCore {
@@ -60,6 +61,12 @@ public:
 
     static bool isIdentity(const RenderElement&, const Style::Filter&);
     static IntOutsets calculateOutsets(const RenderElement&, const Style::Filter&, const FloatRect& targetBoundingBox);
+
+    // If the given filter consists solely of reference filters that are each equivalent to a color
+    // matrix (e.g. an alpha-scaling feComponentTransfer), returns the equivalent FilterOperations so
+    // the compositor can render them. Returns nullopt if any part is not representable, in which case
+    // the caller must fall back to the software filter path. See RenderLayerBacking::updateFilters.
+    static std::optional<FilterOperations> compositedColorMatrixFiltersForReferenceFilter(const RenderElement&, const Style::Filter&);
 
 private:
     CSSFilterRenderer(const FilterGeometry&, OptionSet<FilterRenderingOption>, bool hasFilterThatMovesPixels, bool hasFilterThatShouldBeRestrictedBySecurityOrigin);

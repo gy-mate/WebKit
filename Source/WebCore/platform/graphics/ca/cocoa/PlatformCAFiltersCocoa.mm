@@ -57,6 +57,7 @@ static unsigned NODELETE keyValueCountForFilter(const FilterOperation& filterOpe
     case FilterOperation::Type::Grayscale:
     case FilterOperation::Type::Blur:
         return 1;
+    case FilterOperation::Type::ColorMatrix:
     case FilterOperation::Type::Passthrough:
         return 0;
     }
@@ -157,6 +158,7 @@ void PlatformCAFilters::presentationModifiers(const FilterOperations& initialFil
             presentationModifiers.append({ type, adoptNS([[CAPresentationModifier alloc] initWithKeyPath:keyValueName.createNSString().get() initialValue:filterValueForOperation(initialFilterOperation).get() additive:NO group:group.get()]) });
             continue;
         }
+        case FilterOperation::Type::ColorMatrix:
         case FilterOperation::Type::Passthrough:
             continue;
         }
@@ -202,6 +204,7 @@ void PlatformCAFilters::updatePresentationModifiers(const FilterOperations& filt
             [presentationModifiers[i].second.get() setValue:filterValueForOperation(filterOperation).get()];
             continue;
         }
+        case FilterOperation::Type::ColorMatrix:
         case FilterOperation::Type::Passthrough:
             continue;
         }
@@ -303,6 +306,19 @@ void PlatformCAFilters::setFiltersOnLayer(PlatformLayer* layer, const FilterOper
             RetainPtr<NSValue> colorMatrixValue = PlatformCAFilters::colorMatrixValueForFilter(filterOperation.type(), &filterOperation);
             CAFilter *filter = [CAFilter filterWithType:kCAFilterColorMatrix];
             [filter setValue:colorMatrixValue.get() forKey:@"inputColorMatrix"];
+            [filter setName:filterName.createNSString().get()];
+            return filter;
+        }
+        case FilterOperation::Type::ColorMatrix: {
+            const auto& values = downcast<ColorMatrixFilterOperation>(filterOperation).values();
+            CAColorMatrix caMatrix = {
+                values[0],  values[1],  values[2],  values[3],  values[4],
+                values[5],  values[6],  values[7],  values[8],  values[9],
+                values[10], values[11], values[12], values[13], values[14],
+                values[15], values[16], values[17], values[18], values[19],
+            };
+            CAFilter *filter = [CAFilter filterWithType:kCAFilterColorMatrix];
+            [filter setValue:[NSValue valueWithCAColorMatrix:caMatrix] forKey:@"inputColorMatrix"];
             [filter setName:filterName.createNSString().get()];
             return filter;
         }

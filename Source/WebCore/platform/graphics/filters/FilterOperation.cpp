@@ -193,6 +193,13 @@ bool DropShadowFilterOperation::operator==(const FilterOperation& operation) con
         && m_stdDeviation == other.m_stdDeviation;
 }
 
+bool ColorMatrixFilterOperation::operator==(const FilterOperation& operation) const
+{
+    if (!isSameType(operation))
+        return false;
+    return m_values == downcast<ColorMatrixFilterOperation>(operation).m_values;
+}
+
 RefPtr<FilterOperation> DropShadowFilterOperation::blend(const FilterOperation* from, const BlendingContext& context, bool blendToPassthrough)
 {
     // We should only ever be blending with null or similar operations.
@@ -269,6 +276,14 @@ TextStream& operator<<(TextStream& ts, const FilterOperation& filter)
     case FilterOperation::Type::DropShadow: {
         const auto& dropShadowFilter = downcast<DropShadowFilterOperation>(filter);
         ts << "drop-shadow("_s << dropShadowFilter.x() << ' ' << dropShadowFilter.y() << ' ' << dropShadowFilter.location() << ' ' << dropShadowFilter.color() << ')';
+        break;
+    }
+    case FilterOperation::Type::ColorMatrix: {
+        const auto& colorMatrixFilter = downcast<ColorMatrixFilterOperation>(filter);
+        ts << "color-matrix("_s;
+        for (size_t i = 0; i < colorMatrixFilter.values().size(); ++i)
+            ts << (i ? " "_s : ""_s) << colorMatrixFilter.values()[i];
+        ts << ')';
         break;
     }
     case FilterOperation::Type::Passthrough:

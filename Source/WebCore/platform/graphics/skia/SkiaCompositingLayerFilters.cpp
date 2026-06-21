@@ -73,6 +73,10 @@ sk_sp<SkImageFilter> create(const FilterOperation& filterOperation, sk_sp<SkImag
         const auto matrix = contrastColorMatrix(downcast<BasicComponentTransferFilterOperation>(filterOperation).amount());
         return SkImageFilters::ColorFilter(SkColorFilters::Matrix(matrix.data().data()), input);
     }
+    case FilterOperation::Type::ColorMatrix: {
+        // Row-major RGBA color matrix, matching SkColorFilters::Matrix's expected layout.
+        return SkImageFilters::ColorFilter(SkColorFilters::Matrix(downcast<ColorMatrixFilterOperation>(filterOperation).values().data()), input);
+    }
     case FilterOperation::Type::Blur: {
         auto sigma = downcast<BlurFilterOperation>(filterOperation).stdDeviation();
         // FIXME: do we need to add crop rect?

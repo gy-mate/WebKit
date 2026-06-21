@@ -31,6 +31,7 @@
 #include "BitmapImage.h"
 #include "BlendingKeyframes.h"
 #include "BorderShape.h"
+#include "CSSFilterRenderer.h"
 #include "CSSPropertyNames.h"
 #include "CachedImage.h"
 #include "CanvasRenderingContext2DBase.h"
@@ -858,7 +859,22 @@ void RenderLayerBacking::updateChildrenTransformAndAnchorPoint(const LayoutRect&
 
 void RenderLayerBacking::updateFilters(const Style::ComputedStyle& style)
 {
-    m_canCompositeFilters = !style.filter().hasReferenceFilter() && m_graphicsLayer->setFilters(Style::toPlatform(style.filter(), style));
+    if (style.filter().hasReferenceFilter()) {
+#if PLATFORM(COCOA)
+        // A referenced SVG filter that is equivalent to a color matrix (e.g. an alpha-scaling
+        // feComponentTransfer, as used by the iD map editor) can be composited via Core Animation
+        // instead of being re-applied by the slow software filter path on every paint.
+        // See https://bugs.webkit.org/show_bug.cgi?id=287982.
+        if (auto compositedFilters = CSSFilterRenderer::compositedColorMatrixFiltersForReferenceFilter(renderer(), style.filter())) {
+            m_canCompositeFilters = m_graphicsLayer->setFilters(*compositedFilters);
+            return;
+        }
+#endif
+        m_canCompositeFilters = false;
+        return;
+    }
+
+    m_canCompositeFilters = m_graphicsLayer->setFilters(Style::toPlatform(style.filter(), style));
 }
 
 void RenderLayerBacking::updateBackdropFilters(const Style::ComputedStyle& style)

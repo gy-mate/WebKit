@@ -27,13 +27,22 @@
 #include "config.h"
 #include "CSSFilterRenderer.h"
 
+#include "ElementChildIteratorInlines.h"
+#include "FEComponentTransfer.h"
+#include "FilterOperations.h"
 #include "Logging.h"
 #include "ReferencedSVGResources.h"
 #include "RenderElement.h"
 #include "RenderElementInlines.h"
 #include "RenderObjectInlines.h"
+#include "SVGComponentTransferFunctionElement.h"
+#include "SVGComponentTransferFunctionElementInlines.h"
+#include "SVGElementTypeHelpers.h"
+#include "SVGFEComponentTransferElement.h"
 #include "SVGFilterElement.h"
+#include "SVGFilterPrimitiveStandardAttributes.h"
 #include "SVGFilterRenderer.h"
+#include "SVGNames.h"
 #include "SourceGraphic.h"
 #include "StyleFilter.h"
 #include "StylePrimitiveNumericTypes+Logging.h"
@@ -116,6 +125,118 @@ static IntOutsets calculateReferenceFilterOutsets(const Style::FilterReference& 
         return { };
 
     return SVGFilterRenderer::calculateOutsets(*filterElement, targetBoundingBox);
+}
+
+static bool linearTransferCoefficients(const ComponentTransferFunction& function, float& slope, float& intercept)
+{
+    // A color matrix can only represent identity and linear transfer functions (out = slope * in + intercept).
+    switch (function.type) {
+    case ComponentTransferType::FECOMPONENTTRANSFER_TYPE_UNKNOWN:
+    case ComponentTransferType::FECOMPONENTTRANSFER_TYPE_IDENTITY:
+        slope = 1;
+        intercept = 0;
+        return true;
+    case ComponentTransferType::FECOMPONENTTRANSFER_TYPE_LINEAR:
+        slope = function.slope;
+        intercept = function.intercept;
+        return true;
+    case ComponentTransferType::FECOMPONENTTRANSFER_TYPE_TABLE:
+    case ComponentTransferType::FECOMPONENTTRANSFER_TYPE_DISCRETE:
+    case ComponentTransferType::FECOMPONENTTRANSFER_TYPE_GAMMA:
+        return false;
+    }
+    return false;
+}
+
+static std::optional<std::array<float, 20>> colorMatrixForReferenceFilter(const Style::FilterReference& filterReference, const RenderElement& renderer)
+{
+    RefPtr filterElement = referenceFilterElement(filterReference, renderer);
+    if (!filterElement)
+        return std::nullopt;
+
+    // The compositor applies a color matrix to the whole layer and does not clip to a filter region,
+    // so only the default region (which fully contains the element) can be matched exactly.
+    if (filterElement->filterUnits() != SVGUnitTypes::SVG_UNIT_TYPE_OBJECTBOUNDINGBOX)
+        return std::nullopt;
+    if (filterElement->hasAttributeWithoutSynchronization(SVGNames::xAttr)
+        || filterElement->hasAttributeWithoutSynchronization(SVGNames::yAttr)
+        || filterElement->hasAttributeWithoutSynchronization(SVGNames::widthAttr)
+        || filterElement->hasAttributeWithoutSynchronization(SVGNames::heightAttr))
+        return std::nullopt;
+
+    // The filter must be a single feComponentTransfer primitive.
+    RefPtr<SVGFEComponentTransferElement> componentTransfer;
+    for (Ref primitive : childrenOfType<SVGFilterPrimitiveStandardAttributes>(*filterElement)) {
+        if (componentTransfer)
+            return std::nullopt;
+        componentTransfer = dynamicDowncast<SVGFEComponentTransferElement>(primitive.get());
+        if (!componentTransfer)
+            return std::nullopt;
+    }
+    if (!componentTransfer)
+        return std::nullopt;
+
+    // It must consume SourceGraphic (the default input) over the whole element (no primitive subregion).
+    if (!componentTransfer->in1().isEmpty() || componentTransfer->effectGeometryFlags())
+        return std::nullopt;
+
+    ComponentTransferFunctions functions;
+    for (Ref function : childrenOfType<SVGComponentTransferFunctionElement>(*componentTransfer))
+        functions[function->channel()] = function->transferFunction();
+
+    float slopeR, interceptR, slopeG, interceptG, slopeB, interceptB, slopeA, interceptA;
+    if (!linearTransferCoefficients(functions[ComponentTransferChannel::Red], slopeR, interceptR)
+        || !linearTransferCoefficients(functions[ComponentTransferChannel::Green], slopeG, interceptG)
+        || !linearTransferCoefficients(functions[ComponentTransferChannel::Blue], slopeB, interceptB)
+        || !linearTransferCoefficients(functions[ComponentTransferChannel::Alpha], slopeA, interceptA))
+        return std::nullopt;
+
+    // feComponentTransfer defaults to operating in linearRGB, but the compositor applies the matrix in
+    // the layer's (sRGB/device) color space. Color space only affects the color channels, never alpha,
+    // so the linearRGB case is only safe to composite when the color channels are left unchanged (the
+    // common alpha-only "make edges opaque" workaround). See https://bugs.webkit.org/show_bug.cgi?id=287982.
+    bool colorChannelsAreIdentity = slopeR == 1 && !interceptR && slopeG == 1 && !interceptG && slopeB == 1 && !interceptB;
+    if (componentTransfer->colorInterpolation() == ColorInterpolation::LinearRGB && !colorChannelsAreIdentity)
+        return std::nullopt;
+
+    // Row-major { R, G, B, A } rows, each { r, g, b, a, bias }.
+    return std::array<float, 20> { {
+        slopeR, 0,      0,      0,      interceptR,
+        0,      slopeG, 0,      0,      interceptG,
+        0,      0,      slopeB, 0,      interceptB,
+        0,      0,      0,      slopeA, interceptA,
+    } };
+}
+
+std::optional<FilterOperations> CSSFilterRenderer::compositedColorMatrixFiltersForReferenceFilter(const RenderElement& renderer, const Style::Filter& filter)
+{
+    if (filter.isNone())
+        return std::nullopt;
+
+    Vector<Ref<FilterOperation>> operations;
+    bool representable = true;
+    for (auto& filterValue : filter) {
+        WTF::switchOn(filterValue,
+            [&](const Style::FilterReference& filterReference) {
+                if (auto values = colorMatrixForReferenceFilter(filterReference, renderer))
+                    operations.append(ColorMatrixFilterOperation::create(*values));
+                else
+                    representable = false;
+            },
+            [&](const auto&) {
+                // Only pure reference filters are handled; mixing with CSS <filter-function>s
+                // falls back to the software filter path.
+                representable = false;
+            }
+        );
+        if (!representable)
+            return std::nullopt;
+    }
+
+    if (operations.isEmpty())
+        return std::nullopt;
+
+    return FilterOperations { WTF::move(operations) };
 }
 
 static RefPtr<SVGFilterRenderer> createReferenceFilter(const CSSFilterRenderer& filter, const Style::FilterReference& filterReference, RenderElement& renderer, OptionSet<FilterRenderingMode> preferredRenderingModes, OptionSet<FilterRenderingOption> renderingOptions, const GraphicsContext& destinationContext)

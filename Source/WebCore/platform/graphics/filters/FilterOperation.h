@@ -28,6 +28,7 @@
 #include <WebCore/BoxExtents.h>
 #include <WebCore/Color.h>
 #include <WebCore/IntPoint.h>
+#include <array>
 #include <wtf/ThreadSafeRefCounted.h>
 #include <wtf/TypeCasts.h>
 #include <wtf/text/WTFString.h>
@@ -52,6 +53,7 @@ public:
         Contrast,
         Blur,
         DropShadow,
+        ColorMatrix,
         Passthrough,
         Default,
         None
@@ -289,6 +291,42 @@ private:
     int m_stdDeviation; // FIXME: Should m_stdDeviation be a float?
 };
 
+// An arbitrary 4x5 (row-major: { R, G, B, A } rows, each { r, g, b, a, bias }) color matrix.
+// This operation is not produced by CSS parsing; it is synthesized internally so that a referenced
+// SVG filter that is equivalent to a color matrix (e.g. an alpha-scaling feComponentTransfer) can be
+// rendered by the compositor instead of the slow software filter path. See RenderLayerBacking.
+class WEBCORE_EXPORT ColorMatrixFilterOperation final : public FilterOperation {
+public:
+    static Ref<ColorMatrixFilterOperation> create(std::array<float, 20> values)
+    {
+        return adoptRef(*new ColorMatrixFilterOperation(WTF::move(values)));
+    }
+
+    Ref<FilterOperation> clone() const override
+    {
+        return adoptRef(*new ColorMatrixFilterOperation(m_values));
+    }
+
+    const std::array<float, 20>& values() const LIFETIME_BOUND { return m_values; }
+
+    // The alpha output row is { 0, 0, 0, 1, 0 } for an operation that leaves alpha untouched.
+    bool affectsOpacity() const override
+    {
+        return m_values[15] || m_values[16] || m_values[17] || m_values[18] != 1 || m_values[19];
+    }
+
+private:
+    bool operator==(const FilterOperation&) const override;
+
+    explicit ColorMatrixFilterOperation(std::array<float, 20> values)
+        : FilterOperation(Type::ColorMatrix)
+        , m_values(WTF::move(values))
+    {
+    }
+
+    std::array<float, 20> m_values;
+};
+
 WEBCORE_EXPORT WTF::TextStream& operator<<(WTF::TextStream&, const FilterOperation&);
 
 } // namespace WebCore
@@ -304,3 +342,4 @@ SPECIALIZE_TYPE_TRAITS_FILTEROPERATION(BasicColorMatrixFilterOperation, isBasicC
 SPECIALIZE_TYPE_TRAITS_FILTEROPERATION(BasicComponentTransferFilterOperation, isBasicComponentTransferFilterOperation())
 SPECIALIZE_TYPE_TRAITS_FILTEROPERATION(BlurFilterOperation, type() == WebCore::FilterOperation::Type::Blur)
 SPECIALIZE_TYPE_TRAITS_FILTEROPERATION(DropShadowFilterOperation, type() == WebCore::FilterOperation::Type::DropShadow)
+SPECIALIZE_TYPE_TRAITS_FILTEROPERATION(ColorMatrixFilterOperation, type() == WebCore::FilterOperation::Type::ColorMatrix)

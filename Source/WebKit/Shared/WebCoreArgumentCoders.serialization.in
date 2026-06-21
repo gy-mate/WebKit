@@ -5940,6 +5940,7 @@ header: <WebCore/SharedBuffer.h>
     WebCore::BasicComponentTransferFilterOperation
     WebCore::BlurFilterOperation
     WebCore::DropShadowFilterOperation
+    WebCore::ColorMatrixFilterOperation
     WebCore::DefaultFilterOperation
     WebCore::PassthroughFilterOperation
 }
@@ -5959,6 +5960,9 @@ header: <WebCore/SharedBuffer.h>
     WebCore::Color color();
     WebCore::IntPoint location();
     int stdDeviation();
+};
+[CustomHeader, RefCounted] class WebCore::ColorMatrixFilterOperation {
+    std::array<float, 20> values();
 };
 [CustomHeader, RefCounted] class WebCore::DefaultFilterOperation {
     WebCore::FilterOperation::Type representedType();
