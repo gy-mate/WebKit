@@ -3965,6 +3965,13 @@ bool RenderLayerCompositor::requiresCompositingForFilters(RenderLayerModelObject
         return true;
 #endif
 
+    // A referenced SVG filter is rendered by the software filter path (it has no Core Animation
+    // equivalent), which is expensive to re-run on every paint. Keep such a layer composited so its
+    // filtered backing store is cached and reused, and so it does not thrash in and out of compositing
+    // as filtered composited descendants come and go. See https://bugs.webkit.org/show_bug.cgi?id=287982.
+    if (renderer.style().filter().hasReferenceFilter())
+        return true;
+
     if (!(m_compositingTriggers & ChromeClient::FilterTrigger))
         return false;
 

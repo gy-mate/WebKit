@@ -3662,6 +3662,9 @@ void RenderLayer::applyFilters(GraphicsContext& originalContext, const LayerPain
 
     m_suppressAncestorClippingInsideFilter = false;
 
+    if (renderer().style().filter().hasReferenceFilter())
+        WTFLogAlways("[alphaSlope5-diag] SOFTWARE applyFilters ref-filter layer=%p composited=%d stackingCtx=%d isSVG=%d size=%dx%d opacity=%.3f elem=%s", this, isComposited(), isStackingContext(), renderer().isRenderOrLegacyRenderSVGModelObject(), size().width(), size().height(), Style::evaluate<float>(renderer().style().opacity()), renderer().debugDescription().utf8().data());
+
     if (needsClipping) {
         RegionContextStateSaver regionContextStateSaver(paintingInfo.regionContext);
 

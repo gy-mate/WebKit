@@ -740,6 +740,8 @@ static LayoutRect overflowControlsHostLayerRect(const RenderBox& renderBox)
 
 void RenderLayerBacking::updateOpacity(const Style::ComputedStyle& style)
 {
+    if (style.filter().hasReferenceFilter())
+        WTFLogAlways("[alphaSlope5-diag] updateOpacity ref-filter layer=%p styleOpacity=%.3f compositedOpacity=%.3f", this, Style::evaluate<float>(style.opacity()), compositingOpacity(Style::evaluate<float>(style.opacity())));
     m_graphicsLayer->setOpacity(compositingOpacity(Style::evaluate<float>(style.opacity())));
 }
 
@@ -859,22 +861,16 @@ void RenderLayerBacking::updateChildrenTransformAndAnchorPoint(const LayoutRect&
 
 void RenderLayerBacking::updateFilters(const Style::ComputedStyle& style)
 {
-    if (style.filter().hasReferenceFilter()) {
-#if PLATFORM(COCOA)
-        // A referenced SVG filter that is equivalent to a color matrix (e.g. an alpha-scaling
-        // feComponentTransfer, as used by the iD map editor) can be composited via Core Animation
-        // instead of being re-applied by the slow software filter path on every paint.
-        // See https://bugs.webkit.org/show_bug.cgi?id=287982.
-        if (auto compositedFilters = CSSFilterRenderer::compositedColorMatrixFiltersForReferenceFilter(renderer(), style.filter())) {
-            m_canCompositeFilters = m_graphicsLayer->setFilters(*compositedFilters);
-            return;
-        }
-#endif
-        m_canCompositeFilters = false;
-        return;
-    }
-
-    m_canCompositeFilters = m_graphicsLayer->setFilters(Style::toPlatform(style.filter(), style));
+    // A referenced SVG filter cannot be faithfully reproduced by a Core Animation filter (a CA color
+    // matrix, for example, cannot clamp a saturating alpha transfer like feFuncA slope=5, which would
+    // overshoot and wash out the layer once it is flattened into a group buffer). Instead it is rendered
+    // by the software filter path into this layer's backing store, where the result is correctly clamped
+    // and cached: the layer is kept composited (see RenderLayerCompositor::requiresCompositingForFilters)
+    // so the filtered backing store is reused across frames rather than re-filtered on every paint.
+    // See https://bugs.webkit.org/show_bug.cgi?id=287982.
+    m_canCompositeFilters = !style.filter().hasReferenceFilter() && m_graphicsLayer->setFilters(Style::toPlatform(style.filter(), style));
+    if (style.filter().hasReferenceFilter())
+        WTFLogAlways("[alphaSlope5-diag] updateFilters ref-filter SOFTWARE+cached layer=%p opacity=%.3f canComposite=%d elem=%s", this, Style::evaluate<float>(style.opacity()), m_canCompositeFilters, renderer().debugDescription().utf8().data());
 }
 
 void RenderLayerBacking::updateBackdropFilters(const Style::ComputedStyle& style)
